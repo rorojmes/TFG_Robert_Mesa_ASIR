@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+__MACOSX/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Node (no incluir dependencias ni builds)
+node_modules/
+dist/
+build/
+coverage/
+
+# Secretos y temporales
+*.key
+*.pem
+*.pub
+id_rsa
+secrets*
+.env
+*.zip
+temp_robert_mesa/
+temp_despliegue/
+
+# Logs
+*.log

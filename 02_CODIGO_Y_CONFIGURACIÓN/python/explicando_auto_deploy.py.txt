@@ -1,0 +1,48 @@
+README.md 
+Markdown
+# 🚀 Local Automated Web Deployment Watcher (macOS Daemon)
+
+Este script de Python actúa como un demonio (daemon) en segundo plano para monitorizar un directorio local en macOS. Automatiza por completo el flujo de descompresión, compilación estática (`npm run build`), sincronización SFTP segura y limpieza inmediata cada vez que se detecta un paquete ZIP específico del proyecto.
+
+---
+
+## 🛠️ Arquitectura y Funcionamiento
+
+El script utiliza hilos de monitorización a nivel de sistema de archivos para reaccionar en tiempo real, aislando el proceso en directorios limpios y controlando la interfaz del sistema operativo.
+
+### Componentes Clave:
+1. **`watchdog`**: Monitoriza de forma continua el directorio sin consumir ciclos excesivos de CPU.
+2. **`paramiko`**: Gestiona de forma nativa canales criptográficos SSH/SFTP mediante llaves privadas (`RSA` o `Ed25519`).
+3. **AppleScript Interop**: Interactúa con la interfaz gráfica de macOS para maximizar iTerm2 cuando se inicializa una tarea.
+4. **Candado Antirebote (Concurrency Control)**: Un flag de control (`self.procesando`) bloquea eventos duplicados de escritura/modificación que lanzan los navegadores en milisegundos durante las descargas progresivas.
+
+---
+
+## 📋 Requisitos del Entorno Local
+
+Antes de poner en marcha el script, asegúrate de contar con las siguientes librerías de Python instaladas en tu Mac:
+
+```bash
+pip install watchdog paramiko
+⚙️ Especificación de Parámetros
+El script cuenta con variables de configuración estáticas en su sección superior:
+Directorio Base (BASE_DIR): /Users/roro/vs-code — Ruta vigilada.
+Archivo Objetivo (ZIP_NAME): robert-mesa-|-artista.zip.
+Entorno de Compilación (SERVER_DIR): /Users/roro/vs-code/robert-mesa-|-artista para servidor — Carpeta persistente donde se ejecuta el build.
+Destino Remoto SFTP (REMOTE_DIR): /var/www/danza — Servidor de producción en la IP <SERVER_IP>.
+Credenciales: Usuario ubuntu autenticado a través de la llave privada en /Users/roro/Downloads/ssh-key-2026-02-23.key.
+🔄 Flujo Secuencial de Operaciones
+Cuando se deposita el archivo .zip en la carpeta vigilada, ocurren los siguientes pasos automáticamente:
+[Descarga ZIP] ➔ [Foco en iTerm] ➔ [Extracción Aislada] ➔ [npm run build] ➔ [Subida SFTP] ➔ [Limpieza]
+Detección y Foco: El sistema operativo detecta la creación/renombrado del archivo. Espera 2 segundos para asegurar que la descarga física en disco haya terminado, activa el candado y ejecuta un AppleScript para traer la ventana activa de iTerm al frente.
+Preparación Temporal: Crea un directorio de descompresión limpio (robert-mesa-|-artista) y extrae los archivos fuente. Remueve directorios fantasmas redundantes propios de macOS como __MACOSX.
+Sincronización Interna: Mueve los nuevos archivos extraídos a la carpeta de entorno del servidor local, respetando las estructuras de subdirectorios existentes.
+Purga Temprana: Elimina de forma inmediata el archivo .zip de origen y la subcarpeta temporal extraída originalmente para optimizar el almacenamiento de tu Mac.
+Compilación en Subproceso: Se posiciona en la carpeta de build y ejecuta npm run build en un subproceso aislado, capturando el flujo de logs en iTerm. Si falla, interrumpe el flujo de forma segura.
+Despliegue SFTP Recursivo: Localiza la carpeta /dist generada, abre un canal SFTP hacia la instancia web remota, comprueba la existencia de la estructura de directorios remotos (y los crea recursivamente si faltan) y sube uno a uno los assets estáticos sobreescribiendo la versión anterior.
+Re-armado de Espera: Libera el flag de procesamiento tras una pausa de seguridad, dejando la terminal en bucle continuo lista para la siguiente descarga.
+🚀 Ejecución Continua
+Para arrancar el monitor y dejarlo escuchando en segundo plano, abre tu terminal iTerm y ejecuta:
+Bash
+python3 auto_deploy.py
+Para detener el daemon en cualquier momento, presiona Ctrl + C en tu ventana de terminal.

@@ -1,0 +1,172 @@
+Documentación técnica de tu arquitectura actual explicada al detalle, actualizada con las últimas correcciones de Node.js en tu servidor y adaptada al flujo de trabajo real que usas desde el iPad con Documents y Termius.
+
+Está en un bloque Markdown limpio y copiable para que lo subas directo a tu web o wiki:
+
+```markdown
+# Documentación Técnica: Pipeline de Despliegue Híbrido (iPadOS a Servidor Ubuntu)
+
+Este documento detalla la infraestructura de integración y despliegue continuo (CI/CD) implementada para actualizar la plataforma web de producción desde entornos móviles (iPad/iPhone). El sistema combina la gestión visual de archivos en movilidad con un motor de compilación e integración automatizado en la nube.
+
+---
+
+## 🛠️ Arquitectura General del Flujo
+
+Para sortear las restricciones de los navegadores móviles y optimizar el rendimiento, el flujo de trabajo delega las tareas pesadas al servidor:
+
+
+```
+
+[iPad: Descarga ZIP] ➔ [Documents: Envío SFTP] ➔ [Termius: Ejecución SSH] ➔ [Servidor: Script Python (Descompresión + Node v20 Build + Despliegue + Limpieza)]
+
+```
+
+1. **Fase Móvil (Gestión y Control):** Descarga del paquete del proyecto, transferencia binaria a través de canales SFTP seguros independientes de Safari y control remoto de consola.
+2. **Fase Servidor (Procesamiento Aislado):** Recepción de archivos en la home del usuario, descompresión automatizada, resolución de dependencias modernas, compilación estática (Vite/Tailwind) y sustitución en caliente de la web de producción.
+
+---
+
+## 📦 1. Especificación del Servidor (Ubuntu)
+
+### Entorno y Dependencias Actualizadas
+El servidor ha sido actualizado a **Node.js v20 LTS** para cumplir con los requerimientos críticos de sintaxis y los motores de compilación modernos de **Vite 6** y **Tailwind 4**, evitando errores de tokens inesperados en el intérprete de JavaScript.
+
+* **Dirección IP:** `<SERVER_IP>`
+* **Usuario:** `ubuntu` (Puerto `22`)
+* **Paquetes Requeridos:** `unzip`, `nodejs` (v20+), `npm`
+
+### Motor de Procesamiento (`/home/ubuntu/deploy_server.py`)
+El script de automatización está escrito en Python 3 y reside en la raíz del usuario `ubuntu` con permisos de ejecución (`chmod +x`). Cuenta con una lógica tolerante a fallos y un sistema inteligente de descubrimiento de archivos.
+
+```python
+#!/usr/bin/env python3
+import os
+import shutil
+import zipfile
+import subprocess
+import glob
+
+# --- CONFIGURACIÓN DE RUTAS EN EL SERVIDOR ---
+PROYECTO_DIR = "/home/ubuntu" 
+EXTRACTION_DIR = os.path.join(PROYECTO_DIR, "temp_robert_mesa")
+DANZA_DIR = "/var/www/danza"
+
+def procesar_despliegue():
+    # Escaneo dinámico y tolerante a los nombres generados por navegadores móviles
+    archivos_zip = glob.glob(os.path.join(PROYECTO_DIR, "*artista*.zip")) + glob.glob(os.path.join(PROYECTO_DIR, "*robert*.zip"))
+    archivos_zip = list(set(archivos_zip)) # Elimina duplicados si existieran
+
+    if not archivos_zip:
+        print(f"❌ Error: No se encontró ningún archivo ZIP coincidente en {PROYECTO_DIR}")
+        return
+
+    # Selección automática del paquete detectado
+    zip_path = archivos_zip[0]
+    zip_name = os.path.basename(zip_path)
+    print(f"📦 ¡Archivo detectado en {PROYECTO_DIR}!: {zip_name}. Iniciando despliegue...")
+
+    try:
+        # 1. Crear entorno sandbox aislado para la compilación
+        if os.path.exists(EXTRACTION_DIR):
+            shutil.rmtree(EXTRACTION_DIR)
+        os.makedirs(EXTRACTION_DIR)
+
+        print("-> Descomprimiendo archivo...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(EXTRACTION_DIR)
+
+        # 2. Limpieza preventiva de metadatos redundantes de Apple
+        macosx_folder = os.path.join(EXTRACTION_DIR, "__MACOSX")
+        if os.path.exists(macosx_folder):
+            shutil.rmtree(macosx_folder)
+
+        # 3. Compilación nativa en el servidor (Requiere Node v20+)
+        print("-> Instalando dependencias y ejecutando 'npm run build'...")
+        result = subprocess.run(
+            "npm install && npm run build",
+            shell=True,
+            cwd=EXTRACTION_DIR,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            print(f"❌ Error durante la compilación (npm):\n{result.stderr}")
+            return
+        print("✓ Compilación completada con éxito (Carpeta 'dist' generada).")
+
+        dist_dir = os.path.join(EXTRACTION_DIR, "dist")
+        if not os.path.exists(dist_dir):
+            print("❌ Error crítico: No se encontró la carpeta 'dist' generada tras el build.")
+            return
+
+        # 4. Despliegue en caliente hacia el directorio web de producción
+        print(f"-> Copiando archivos compilados a {DANZA_DIR}...")
+        if not os.path.exists(DANZA_DIR):
+            os.makedirs(DANZA_DIR)
+
+        for item in os.listdir(dist_dir):
+            s = os.path.join(dist_dir, item)
+            d = os.path.join(DANZA_DIR, item)
+            if os.path.isdir(s):
+                if os.path.exists(d):
+                    shutil.rmtree(d)
+                shutil.copytree(s, d)
+            else:
+                shutil.copy2(s, d)
+
+        print("✓ Archivos actualizados en el servidor web de producción.")
+
+    except Exception as e:
+        print(f"❌ Ocurrió un fallo en el proceso: {e}")
+
+    finally:
+        # 5. Recolección de basura (Garantiza limpieza absoluta ante éxitos o fallos)
+        print("-> Iniciando limpieza de residuos...")
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+            print(f"✓ Archivo origen {zip_name} eliminado de la home.")
+        if os.path.exists(EXTRACTION_DIR):
+            shutil.rmtree(EXTRACTION_DIR)
+            print("✓ Carpeta temporal de descompresión eliminada.")
+        
+        print("🎉 ¡Todo el proceso se completó y el servidor quedó limpio!")
+
+if __name__ == "__main__":
+    procesar_despliegue()
+
+```
+
+---
+
+## 📱 2. Configuración y Flujo de Trabajo en Movilidad (iPadOS)
+
+El flujo se consolida mediante aplicaciones profesionales de gestión que garantizan estabilidad en la transferencia binaria de archivos grandes y ejecución interactiva de comandos SSH.
+
+### Paso 1: Descarga y Adquisición
+
+Se descarga el proyecto completo desde el entorno de desarrollo web o almacenamiento en la nube dentro del iPad. El sistema operativo o el navegador puede renombrar automáticamente los caracteres especiales, resultando en un archivo tolerante como `robert-mesa-_-artista.zip`.
+
+### Paso 2: Transferencia Segura con 'Documents by Readdle'
+
+1. Se abre la aplicación **Documents** en el iPad.
+2. Desde la barra lateral de conexiones de red, se accede al servidor configurado mediante el protocolo **SFTP** (utilizando la IP del servidor, usuario `ubuntu` y la llave criptográfica privada del terminal).
+3. Se localiza el archivo descargado y se arrastra o copia directamente hacia el directorio raíz del usuario: `/home/ubuntu/`.
+
+> 💡 *Nota: Subir el archivo directamente a la Home elimina cualquier conflicto o restricción con los permisos de escritura de Linux, agilizando el canal de subida.*
+
+### Paso 3: Disparo y Despliegue Remoto con 'Termius'
+
+1. Se abre la aplicación **Termius** en el iPad.
+2. Se inicia la sesión SSH guardada para conectar directamente con la consola remota de Ubuntu.
+3. Se ejecuta de forma manual el comando que despierta el motor de compilación:
+```bash
+python3 ~/deploy_server.py
+
+```
+
+
+4. El script procesará e instalará todo de forma transparente. El rastro (*log*) de la compilación de Vite y el volcado final a `/var/www/danza` se visualizan en tiempo real en la pantalla de la tablet, confirmando el éxito del despliegue y la auto-limpieza del disco.
+
+```
+
+```
