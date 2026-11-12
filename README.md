@@ -17,7 +17,7 @@ Documenta la arquitectura, fortificación y automatización de un servidor Linux
 ## Estructura del repositorio
 
 ```
-OCI-Infrastructure-Portfolio_TFG/
+oci-cloud-infrastructure/
 ├── README.md
 ├── .gitignore
 ├── 01_MEMORIA/
